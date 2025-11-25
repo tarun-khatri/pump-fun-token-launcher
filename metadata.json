@@ -1,0 +1,31 @@
+{
+  "name": "DEMOCRAT",
+  "symbol": "DEMOCRAT",
+  "description": "Token created from political content",
+  "image": "https://tomato-defensive-kiwi-610.mypinata.cloud/ipfs/bafkreicsbncyerd6d6aerioffcxtnjwu2czhmtzyg7qguai3jjlw6mbynu",
+  "attributes": [
+    {
+      "trait_type": "Category",
+      "value": "Political Token"
+    },
+    {
+      "trait_type": "Launch Date",
+      "value": "2025-01-11"
+    }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://tomato-defensive-kiwi-610.mypinata.cloud/ipfs/bafkreicsbncyerd6d6aerioffcxtnjwu2czhmtzyg7qguai3jjlw6mbynu",
+        "type": "image/png"
+      }
+    ],
+    "category": "image",
+    "creators": [
+      {
+        "address": "DT2CKYDuas49sJukYmHTbiBPjhH3pp48j5p52h6hTKQA",
+        "share": 100
+      }
+    ]
+  }
+}

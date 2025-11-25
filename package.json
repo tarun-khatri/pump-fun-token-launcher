@@ -9,9 +9,25 @@
   ],
   "scripts": {
     "build": "tsc",
+    "start": "npx tsx src/app.ts",
     "prepublishOnly": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "example": "tsx example.ts"
+    "example": "tsx example.ts",
+    "test-launch": "tsx test-token-launch.ts",
+    "cli": "tsx src/manual-launch.ts",
+    "launch:list": "tsx src/manual-launch.ts list",
+    "launch:preview": "tsx src/manual-launch.ts preview",
+    "launch:execute": "tsx src/manual-launch.ts execute",
+    "launch:history": "tsx src/manual-launch.ts history",
+    "start:automation": "tsx src/app.ts",
+    "test:module2": "tsx tests/test-image-service.ts",
+    "test:module3": "tsx tests/test-ipfs-service.ts",
+    "test:module4": "tsx tests/test-ai-service.ts",
+    "test:module5": "tsx tests/test-metadata-generator.ts",
+    "test:images": "tsx tests/test-image-service.ts",
+    "test:ipfs": "tsx tests/test-ipfs-service.ts",
+    "test:ai": "tsx tests/test-ai-service.ts",
+    "test:metadata": "tsx tests/test-metadata-generator.ts"
   },
   "keywords": [
     "pump.fun",
@@ -32,12 +48,26 @@
   },
   "homepage": "https://github.com/bilix-software/pump-fun-token-launcher#readme",
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
-    "tsx": "^4.0.0"
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.95.0"
+    "@google/genai": "^0.8.0",
+    "@noble/hashes": "^1.8.0",
+    "@pinata/sdk": "^2.1.0",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.95.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "axios": "^1.6.0",
+    "bn.js": "^5.2.2",
+    "bs58": "^6.0.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "dotenv": "^17.2.2",
+    "pinata": "^2.5.1",
+    "sharp": "^0.33.0"
   },
   "engines": {
     "node": ">=16.0.0"

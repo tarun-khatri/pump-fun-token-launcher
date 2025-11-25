@@ -3,13 +3,13 @@ import { Keypair } from '@solana/web3.js';
 
 // Example configuration
 const tokenConfig: TokenLaunchConfig = {
-  name: "Example Token",
-  symbol: "EXAMPLE",
-  metadataUrl: "https://example.com/token-image.png",
+  name: "DEMOCRAT",
+  symbol: "DEMOCRAT",
+  metadataUrl: "https://tomato-defensive-kiwi-610.mypinata.cloud/ipfs/bafkreiahq57emge23vqwkx7w3y72egtkh27acnsrfkhg6nf4xno4srvcyu",
   mintKeypair: undefined, // Optional: use a custom mint keypair if needed, otherwise it will be generated automatically
-  initialBuy: 0.1, // 0.1 SOL initial buy
-  slippage: 5,     // 5% slippage tolerance
-  priorityFee: 0.001 // 0.001 SOL priority fee
+  initialBuy: 0.05, // 0.1 SOL initial buy
+  slippage: 10,     // 5% slippage tolerance
+  priorityFee: 0.0001 // 0.001 SOL priority fee
 };
 
 async function main() {
@@ -21,7 +21,7 @@ async function main() {
 
     // Replace with your actual private key (base64 encoded)
     // Or use environment variable: process.env.PRIVATE_KEY
-    const privateKey = "YOUR_BASE64_ENCODED_PRIVATE_KEY_HERE";
+    const privateKey = "2dCmq3WEmTteYSnVxKnbMmnf6hoxfbos4efRv7WnnAQibinh3JS5trgC5dV8VBMw4e1ECLY9KniKqqZq61PKp2q7";
     
     // Alternative: Generate a new keypair for testing
     // const keyPair = Keypair.generate();

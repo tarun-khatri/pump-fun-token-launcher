@@ -2,7 +2,7 @@ import { createTransaction, sendAndConfirmTransactionWrapper, bufferFromUInt64, 
 import web3, { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,createAssociatedTokenAccountInstruction,getAssociatedTokenAddress } from '@solana/spl-token';
 import { TokenLaunchConfig, LaunchResult } from './index';
-import { COMPUTE_BUDGET_PROGRAM_ID, GLOBAL, MINT_AUTHORITY, MPL_TOKEN_METADATA, PUMP_FUN_ACCOUNT, PUMP_FUN_PROGRAM, RENT, SYSTEM_PROGRAM} from './constants';
+import { COMPUTE_BUDGET_PROGRAM_ID, GLOBAL, MINT_AUTHORITY, MPL_TOKEN_METADATA, PUMP_FUN_ACCOUNT, PUMP_FUN_PROGRAM, RENT, SYSTEM_PROGRAM, FEE_CONFIG, FEE_PROGRAM} from './constants';
 import { calculateTokenAmountForBuy, getKeyPairFromPrivateKey } from './utils';
 import BN from 'bn.js';
 
@@ -172,21 +172,48 @@ export async function launchToken(
             const solInWithSlippage = initialBuy * (1 + slippage / 100);
             const maxSolCost = Math.floor(solInWithSlippage *  web3.LAMPORTS_PER_SOL);
 
+            // Get required PDAs for buy instruction
+            const [globalVolumeAccumulator] = await PublicKey.findProgramAddress(
+                [Buffer.from("global_volume_accumulator")],
+                PUMP_FUN_PROGRAM
+            );
+
+            const [userVolumeAccumulator] = await PublicKey.findProgramAddress(
+                [Buffer.from("user_volume_accumulator"), owner.toBuffer()],
+                PUMP_FUN_PROGRAM
+            );
+
+            const [eventAuthority] = await PublicKey.findProgramAddress(
+                [Buffer.from("__event_authority")],
+                PUMP_FUN_PROGRAM
+            );
+
+            // Use one of the working fee recipients (they appear to rotate)
+            // From successful transactions: 62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV, 
+            // FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz, 7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX
+            const feeRecipient = new PublicKey("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM");
+
+            // Buy instruction with exact same structure as successful transaction
             const buyKeys = [
                 { pubkey: GLOBAL, isSigner: false, isWritable: false },
-                { pubkey: new PublicKey('G5UZAVbAf46s7cKWoyKu8kYTip9DGTpbLZ2qa9Aq69dP'), isSigner: false, isWritable: true },
+                { pubkey: feeRecipient, isSigner: false, isWritable: true },
                 { pubkey: mint.publicKey, isSigner: false, isWritable: false },
                 { pubkey: bondingCurve, isSigner: false, isWritable: true },
                 { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
                 { pubkey: tokenAccount, isSigner: false, isWritable: true },
-                { pubkey: owner, isSigner: false, isWritable: true },
+                { pubkey: owner, isSigner: true, isWritable: true },
                 { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
                 { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
                 { pubkey: creatorVault, isSigner: false, isWritable: true },
-                { pubkey: PUMP_FUN_ACCOUNT, isSigner: false, isWritable: false },
-                { pubkey: PUMP_FUN_PROGRAM, isSigner: false, isWritable: false }
+                { pubkey: eventAuthority, isSigner: false, isWritable: false },
+                { pubkey: PUMP_FUN_PROGRAM, isSigner: false, isWritable: false },
+                { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: true },
+                { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true },
+                { pubkey: FEE_CONFIG, isSigner: false, isWritable: false },
+                { pubkey: FEE_PROGRAM, isSigner: false, isWritable: false }
             ];
 
+            // Buy instruction data - exactly like successful transaction (no track_volume parameter)
             const buyData = Buffer.concat([
                 bufferFromUInt64('16927863322537952870'), // instruction code for "buy"
                 bufferFromUInt64(tokenOut.toString()),
@@ -202,9 +229,17 @@ export async function launchToken(
 
         const transaction = await createTransaction(connection, txBuilder.instructions, payer.publicKey);
         const signature = await sendAndConfirmTransactionWrapper(connection, transaction, [payer, mint]);
+        
+        if (!signature) {
+            return {
+                success: false,
+                error: 'Transaction failed to confirm'
+            };
+        }
+        
         return {
             success: true,
-            signature: signature ?? undefined,
+            signature: signature,
             tokenAddress: mint.publicKey.toString()
         };
     }

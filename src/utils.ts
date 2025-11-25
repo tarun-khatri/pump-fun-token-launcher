@@ -23,8 +23,19 @@ export async function sendAndConfirmTransactionWrapper(connection: Connection, t
         const signature = await sendAndConfirmTransaction(connection, transaction, signers, { skipPreflight: true, preflightCommitment: 'confirmed' });
         console.log('Transaction confirmed with signature:', signature);
         return signature;
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error sending transaction:', error);
+        
+        // Try to get transaction logs for debugging
+        if (error.signature) {
+            try {
+                const logs = await connection.getTransactionLogs(error.signature);
+                console.log('Transaction logs:', logs);
+            } catch (logError) {
+                console.log('Could not fetch transaction logs');
+            }
+        }
+        
         return null;
     }
 }
