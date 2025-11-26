@@ -6,70 +6,70 @@ import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import BN from 'bn.js';
 
 export async function getKeyPairFromPrivateKey(key: string) {
-    return Keypair.fromSecretKey(
-        new Uint8Array(bs58.decode(key))
-    );
+  return Keypair.fromSecretKey(
+    new Uint8Array(bs58.decode(key))
+  );
 }
 
 export async function createTransaction(connection: Connection, instructions: TransactionInstruction[], payer: PublicKey): Promise<Transaction> {
-    const transaction = new Transaction().add(...instructions);
-    transaction.feePayer = payer;
-    transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-    return transaction;
+  const transaction = new Transaction().add(...instructions);
+  transaction.feePayer = payer;
+  transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  return transaction;
 }
 
 export async function sendAndConfirmTransactionWrapper(connection: Connection, transaction: Transaction, signers: any[]) {
-    try {
-        const signature = await sendAndConfirmTransaction(connection, transaction, signers, { skipPreflight: true, preflightCommitment: 'confirmed' });
-        console.log('Transaction confirmed with signature:', signature);
-        return signature;
-    } catch (error: any) {
-        console.error('Error sending transaction:', error);
-        
-        // Try to get transaction logs for debugging
-        if (error.signature) {
-            try {
-                const logs = await connection.getTransactionLogs(error.signature);
-                console.log('Transaction logs:', logs);
-            } catch (logError) {
-                console.log('Could not fetch transaction logs');
-            }
-        }
-        
-        return null;
+  try {
+    const signature = await sendAndConfirmTransaction(connection, transaction, signers, { skipPreflight: true, preflightCommitment: 'confirmed' });
+    console.log('Transaction confirmed with signature:', signature);
+    return signature;
+  } catch (error: any) {
+    console.error('Error sending transaction:', error);
+
+    // Try to get transaction logs for debugging
+    if (error.signature) {
+      try {
+        const tx = await connection.getTransaction(error.signature);
+        console.log('Transaction logs:', tx?.meta?.logMessages);
+      } catch (logError) {
+        console.log('Could not fetch transaction logs');
+      }
     }
+
+    return null;
+  }
 }
 
 export function bufferFromUInt64(value: number | string) {
-    let buffer = Buffer.alloc(8);
-    buffer.writeBigUInt64LE(BigInt(value));
-    return buffer;
+  let buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64LE(BigInt(value));
+  return buffer;
 }
 
 export function generatePubKey({
-    fromPublicKey,
-    programId = TOKEN_PROGRAM_ID,
-  }: {
-    fromPublicKey: PublicKey
-    programId: PublicKey
-  }) {
-    const seed =Keypair.generate().publicKey.toBase58().slice(0, 32)
-    
-    const publicKey = createWithSeed(fromPublicKey, seed, programId)
-    return { publicKey, seed }
-  }
-  
-  function createWithSeed(fromPublicKey: PublicKey, seed: string, programId: PublicKey) {
-    const buffer = Buffer.concat([fromPublicKey.toBuffer(), Buffer.from(seed), programId.toBuffer()])
-    const publicKeyBytes = sha256(buffer)
-    return new PublicKey(publicKeyBytes)
-  }
-  
-  export function bufferFromString(value: string) {
-    const buffer = Buffer.alloc(4 + value.length);
-    buffer.writeUInt32LE(value.length, 0);
-    buffer.write(value, 4);
-    return buffer;
+  fromPublicKey,
+  programId = TOKEN_PROGRAM_ID,
+}: {
+  fromPublicKey: PublicKey
+  programId: PublicKey
+}) {
+  const seed = Keypair.generate().publicKey.toBase58().slice(0, 32)
+
+  const publicKey = createWithSeed(fromPublicKey, seed, programId)
+  return { publicKey, seed }
+}
+
+function createWithSeed(fromPublicKey: PublicKey, seed: string, programId: PublicKey) {
+  const buffer = Buffer.concat([fromPublicKey.toBuffer(), Buffer.from(seed), programId.toBuffer()])
+  const publicKeyBytes = sha256(buffer)
+  return new PublicKey(publicKeyBytes)
+}
+
+export function bufferFromString(value: string) {
+  const buffer = Buffer.alloc(4 + value.length);
+  buffer.writeUInt32LE(value.length, 0);
+  buffer.write(value, 4);
+  return buffer;
 }
 
 /**

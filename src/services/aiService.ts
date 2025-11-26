@@ -141,6 +141,9 @@ export class AIService {
             console.log('🤖 AI Response:', response.text);
 
             // Parse JSON response
+            if (!response.text) {
+                throw new Error('AI response text is empty');
+            }
             const suggestion = JSON.parse(response.text) as TokenSuggestion;
 
             // Validate the suggestion

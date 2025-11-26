@@ -52,7 +52,7 @@ export interface LaunchedTokenData {
  * Handles database operations for tweets and launched tokens
  */
 export class SupabaseService {
-    private client: SupabaseClient;
+    private client!: SupabaseClient;
     private isInitialized: boolean = false;
 
     constructor() {
