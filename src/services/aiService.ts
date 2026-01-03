@@ -130,7 +130,7 @@ export class AIService {
 
             // Call Gemini API with structured output
             const response = await this.genAI.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: "gemini-2.5-flash-lite",
                 contents: [prompt, ...imageParts],
                 config: {
                     responseMimeType: "application/json",
@@ -332,7 +332,7 @@ Respond ONLY with valid JSON in this EXACT format (no markdown, no code blocks):
 
         try {
             const response = await this.genAI.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: "gemini-2.5-flash-lite",
                 contents: "Say 'Hello'"
             });
 

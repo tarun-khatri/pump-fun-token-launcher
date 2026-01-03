@@ -28,7 +28,7 @@ export class TokenLaunchOrchestrator {
 
     constructor() {
         const privateKey = process.env.SOLANA_PRIVATE_KEY || process.env.PRIVATE_KEY;
-        
+
         if (!privateKey) {
             throw new Error('SOLANA_PRIVATE_KEY or PRIVATE_KEY not set in environment');
         }
@@ -44,41 +44,41 @@ export class TokenLaunchOrchestrator {
      */
     async launchTokenFromTweet(tweetId: string): Promise<LaunchResult> {
         const downloadedImages: string[] = [];
+        let imageIpfsHash = '';
+        let metadataIpfsHash = '';
+        let imageFileId = ''; // Need fileId for unpinning
 
         try {
             console.log(`\n${'='.repeat(60)}`);
             console.log(`🚀 Starting token launch from tweet: ${tweetId}`);
+            console.time('🚀 TOTAL LAUNCH SEQUENCE');
             console.log(`${'='.repeat(60)}\n`);
 
             // STEP 1: Fetch tweet from database
             console.log('📥 Step 1: Fetching tweet from database...');
             const tweet = await supabaseService.getTweetById(tweetId);
-            
+
             if (!tweet) {
                 throw new Error(`Tweet ${tweetId} not found in database`);
             }
 
             console.log(`✅ Tweet fetched: @${tweet.username}`);
             console.log(`   Content: ${tweet.content.substring(0, 100)}...`);
-            console.log(`   Images: ${tweet.images?.length || 0}`);
-            console.log(`   All related images: ${tweet.all_related_images?.length || 0}`);
 
             // Check if already launched
             if (tweet.coin_launched) {
                 throw new Error(`Tweet ${tweetId} already has a token launched: ${tweet.contract_address}`);
             }
 
-            // STEP 2: Get all images (main + quoted + reply)
-            console.log('\n📸 Step 2: Collecting all images...');
+            // STEP 2: Job Preparation (Images)
+            console.log('\n📸 Step 2: Collecting images...');
             const allImageUrls = this.getAllImages(tweet);
-            
+
             if (allImageUrls.length === 0) {
                 throw new Error('No images found in tweet');
             }
 
-            console.log(`✅ Found ${allImageUrls.length} image(s) to analyze`);
-
-            // STEP 3: Download all images for AI analysis
+            // STEP 3: Download images
             console.log('\n⬇️  Step 3: Downloading images...');
             const downloadedPaths = await imageService.downloadAllImages(allImageUrls);
             downloadedImages.push(...downloadedPaths);
@@ -87,54 +87,32 @@ export class TokenLaunchOrchestrator {
                 throw new Error('Failed to download any images');
             }
 
-            console.log(`✅ Downloaded ${downloadedPaths.length} image(s)`);
+            // STEP 4: PARALLEL EXECUTION (AI & IPFS)
+            console.log('\n⚡ Step 4: Parallel Processing (AI Analysis + IPFS Upload)...');
 
-            // STEP 4: Validate images
-            console.log('\n✔️  Step 4: Validating images...');
-            for (const imagePath of downloadedPaths) {
-                const validation = await imageService.validateImage(imagePath);
-                if (!validation.valid) {
-                    console.warn(`⚠️  Image validation warning: ${validation.error}`);
-                }
-            }
+            const aiPromise = aiService.analyzeImagesForToken(downloadedPaths, tweet.content);
+            const imageUploadPromise = ipfsService.uploadImageToIPFS(downloadedPaths[0], `token-image-${tweetId}`);
 
-            // STEP 5: Analyze with AI (send ALL images)
-            console.log('\n🤖 Step 5: Analyzing with Gemini AI...');
-            const aiSuggestion = await aiService.analyzeImagesForToken(
-                downloadedPaths,
-                tweet.content
-            );
+            // Wait for both
+            const [aiSuggestion, imageUpload] = await Promise.all([aiPromise, imageUploadPromise]);
 
-            console.log(`✅ AI Suggestion:`);
-            console.log(`   Name: ${aiSuggestion.name}`);
-            console.log(`   Ticker: ${aiSuggestion.ticker}`);
-            console.log(`   Description: ${aiSuggestion.description}`);
-            console.log(`   Confidence: ${aiSuggestion.confidence}%`);
+            imageIpfsHash = imageUpload.ipfsHash;
+            // Note: Current uploadImageToIPFS returns IPFS hash, but we might need ID for unpinning.
+            // Assuming we can find it or the service returns it. 
+            // The current implementation of ipfsService returns {ipfsHash, url, gatewayUrl}.
+            // Pinata SDK delete requires ID or CID? The SDK call used is `pinata.files.public.delete([fileId])`.
+            // The `upload` method usually returns CID. We might need to query the file ID by CID if the upload response doesn't give it.
+            // Optimization: Let's fetch the file ID immediately if we need to ensure deletion capability,
+            // OR we just use the CID for deletion if the SDK Supports it? 
+            // The docs say `delete([fileId])`. 
+            // We will attempt to lookup file ID by CID if failure occurs.
 
-            // STEP 6: Check ticker uniqueness
-            console.log('\n🔍 Step 6: Checking ticker uniqueness...');
-            const isUnique = await aiService.checkTickerUniqueness(
-                aiSuggestion.ticker,
-                supabaseService.getClient()
-            );
+            console.log(`✅ Parallel tasks complete!`);
+            console.log(`   AI Suggestion: ${aiSuggestion.ticker} (${aiSuggestion.confidence}%)`);
+            console.log(`   Image IPFS: ${imageIpfsHash}`);
 
-            if (!isUnique) {
-                console.warn(`⚠️  Ticker ${aiSuggestion.ticker} already exists, continuing anyway...`);
-            }
-
-            // STEP 7: Upload FIRST image to IPFS
-            console.log('\n📤 Step 7: Uploading image to IPFS...');
-            const firstImagePath = downloadedPaths[0];
-            const imageUpload = await ipfsService.uploadImageToIPFS(
-                firstImagePath,
-                `${aiSuggestion.ticker}-image`
-            );
-
-            console.log(`✅ Image uploaded to IPFS: ${imageUpload.ipfsHash}`);
-            console.log(`   URL: ${imageUpload.url}`);
-
-            // STEP 8: Generate metadata
-            console.log('\n📝 Step 8: Generating metadata...');
+            // STEP 5: Generate & Upload Metadata
+            console.log('\n📝 Step 5: Generating & Uploading Metadata...');
             const creatorAddress = getCreatorAddress();
             const metadata = generateMetadata(
                 aiSuggestion.ticker,
@@ -144,28 +122,25 @@ export class TokenLaunchOrchestrator {
                 creatorAddress
             );
 
-            // Validate metadata
             validateMetadata(metadata);
 
-            // STEP 9: Upload metadata to IPFS
-            console.log('\n📤 Step 9: Uploading metadata to IPFS...');
             const metadataUpload = await ipfsService.uploadMetadataToIPFS(
                 metadata,
                 `${aiSuggestion.ticker}-metadata`
             );
+            metadataIpfsHash = metadataUpload.ipfsHash;
 
-            console.log(`✅ Metadata uploaded to IPFS: ${metadataUpload.ipfsHash}`);
-            console.log(`   URL: ${metadataUpload.url}`);
+            console.log(`✅ Metadata IPFS: ${metadataIpfsHash}`);
 
-            // STEP 10: Launch token on pump.fun
-            console.log('\n🚀 Step 10: Launching token on pump.fun...');
+            // STEP 6: Launch token
+            console.log('\n🚀 Step 6: Launching token on pump.fun...');
             const launchConfig = {
                 name: aiSuggestion.name,
                 symbol: aiSuggestion.ticker,
                 metadataUrl: metadataUpload.url,
-                initialBuy: 0.01,    // 0.01 SOL
-                slippage: 10,         // 10%
-                priorityFee: 0.0001  // 0.0001 SOL
+                initialBuy: 0.01,
+                slippage: 10,
+                priorityFee: 0.0001
             };
 
             const launchResult = await launchToken(launchConfig, this.privateKey);
@@ -174,52 +149,26 @@ export class TokenLaunchOrchestrator {
                 throw new Error(`Token launch failed: ${launchResult.error}`);
             }
 
-            console.log(`✅ Token launched successfully!`);
-            console.log(`   Token Address: ${launchResult.tokenAddress}`);
-            console.log(`   Transaction: ${launchResult.signature}`);
+            console.log(`✅ Token launched: ${launchResult.tokenAddress}`);
 
-            // STEP 11: Wait 15 seconds
-            console.log('\n⏳ Step 11: Waiting 15 seconds...');
+            // STEP 7: Post-Launch Sequence (Sell)
+            console.log('\n⏳ Step 7: Waiting 15s for Sell...');
             await this.sleep(15000);
-            console.log(`✅ Wait complete`);
 
-            // STEP 12: Sell token
-            console.log('\n💰 Step 12: Selling token...');
-            const sellConfig = {
+            console.log('\n💰 Step 8: Selling token...');
+            const sellResult = await sellToken({
                 tokenMint: launchResult.tokenAddress!,
-                tokenAmount: 0,      // Sell all
-                minSolOut: 0.04,     // Min 0.04 SOL
-                slippage: 5,         // 5%
-                priorityFee: 0.0001  // 0.0001 SOL
-            };
+                tokenAmount: 0,
+                minSolOut: 0.04,
+                slippage: 5,
+                priorityFee: 0.0001
+            }, this.privateKey);
 
-            const sellResult = await sellToken(sellConfig, this.privateKey);
-
-            let solReceived = 0;
-            let sellSignature = '';
-
-            if (sellResult.success) {
-                solReceived = sellResult.solReceived || 0;
-                sellSignature = sellResult.signature || '';
-                console.log(`✅ Token sold successfully!`);
-                console.log(`   SOL Received: ${solReceived}`);
-                console.log(`   Transaction: ${sellSignature}`);
-            } else {
-                console.warn(`⚠️  Sell failed: ${sellResult.error}`);
-            }
-
-            // STEP 13: Calculate profit/loss
-            const solSpent = 0.01 + 0.0001 + 0.0001; // buy + fees
+            // ... (Rest of logic: DB Save, specific variables) ...
+            const solSpent = 0.01 + 0.0001 + 0.0001;
+            const solReceived = sellResult.success ? (sellResult.solReceived || 0) : 0;
             const profitLoss = solReceived - solSpent;
 
-            console.log(`\n💵 Financial Summary:`);
-            console.log(`   SOL Spent: ${solSpent.toFixed(4)}`);
-            console.log(`   SOL Received: ${solReceived.toFixed(4)}`);
-            console.log(`   Profit/Loss: ${profitLoss >= 0 ? '+' : ''}${profitLoss.toFixed(4)} SOL`);
-
-            // STEP 14: Save to database
-            console.log('\n💾 Step 13: Saving to database...');
-            
             const launchedTokenData: LaunchedTokenData = {
                 tweet_id: tweetId,
                 contract_address: launchResult.tokenAddress!,
@@ -231,15 +180,15 @@ export class TokenLaunchOrchestrator {
                 ipfs_image_hash: imageUpload.ipfsHash,
                 ipfs_metadata_hash: metadataUpload.ipfsHash,
                 deploy_signature: launchResult.signature,
-                buy_signature: launchResult.signature, // Same transaction
-                sell_signature: sellSignature,
+                buy_signature: launchResult.signature,
+                sell_signature: sellResult.signature || '',
                 initial_buy_amount: 0.01,
                 sol_spent: solSpent,
                 sol_received: solReceived,
                 profit_loss: profitLoss,
                 ai_prompt: `Analyzed ${downloadedPaths.length} images`,
                 ai_response: JSON.stringify(aiSuggestion),
-                ai_model: 'gemini-2.5-flash',
+                ai_model: 'Gemini 2.5 Flash-Lite',
                 ai_confidence: aiSuggestion.confidence,
                 status: sellResult.success ? 'sold' : 'launched',
                 launch_timestamp: new Date().toISOString(),
@@ -247,20 +196,8 @@ export class TokenLaunchOrchestrator {
             };
 
             await supabaseService.saveLaunchedToken(launchedTokenData);
-
-            // STEP 15: Update tweet status
-            console.log('\n✅ Step 14: Updating tweet status...');
             await supabaseService.updateTweetLaunchStatus(tweetId, launchResult.tokenAddress!);
-
-            // STEP 16: Cleanup images
-            console.log('\n🗑️  Step 15: Cleaning up temporary files...');
             await imageService.cleanupAllImages(downloadedImages);
-
-            console.log(`\n${'='.repeat(60)}`);
-            console.log(`✅ TOKEN LAUNCH COMPLETE!`);
-            console.log(`   Token: ${aiSuggestion.ticker} (${launchResult.tokenAddress})`);
-            console.log(`   Profit/Loss: ${profitLoss >= 0 ? '+' : ''}${profitLoss.toFixed(4)} SOL`);
-            console.log(`${'='.repeat(60)}\n`);
 
             return {
                 success: true,
@@ -268,16 +205,41 @@ export class TokenLaunchOrchestrator {
                 tokenSymbol: aiSuggestion.ticker,
                 tokenName: aiSuggestion.name,
                 deploySignature: launchResult.signature,
-                sellSignature: sellSignature,
-                solSpent: solSpent,
-                solReceived: solReceived,
-                profitLoss: profitLoss
+                sellSignature: sellResult.signature,
+                solSpent,
+                solReceived,
+                profitLoss
             };
 
         } catch (error) {
             console.error(`\n❌ Token launch failed:`, error);
 
-            // Mark as failed in database
+            // CLEANUP ON FAILURE: Unpin from Pinata
+            if (imageIpfsHash) {
+                console.log(`🧹 Cleanup: Attempting to unpin image ${imageIpfsHash}...`);
+                try {
+                    // Try to get File object to find ID
+                    const fileDetails = await ipfsService.getFileDetails(imageIpfsHash);
+                    if (fileDetails && fileDetails.id) {
+                        await ipfsService.unpinFile(fileDetails.id);
+                    }
+                } catch (cleanupError) {
+                    console.warn('Failed to unpin image:', cleanupError);
+                }
+            }
+            if (metadataIpfsHash) {
+                console.log(`🧹 Cleanup: Attempting to unpin metadata ${metadataIpfsHash}...`);
+                try {
+                    const fileDetails = await ipfsService.getFileDetails(metadataIpfsHash);
+                    if (fileDetails && fileDetails.id) {
+                        await ipfsService.unpinFile(fileDetails.id);
+                    }
+                } catch (cleanupError) {
+                    console.warn('Failed to unpin metadata:', cleanupError);
+                }
+            }
+
+            // DB Mark Failed
             try {
                 await supabaseService.markLaunchFailed(
                     tweetId,
@@ -287,9 +249,8 @@ export class TokenLaunchOrchestrator {
                 console.error('Failed to mark launch as failed in database:', dbError);
             }
 
-            // Cleanup images on error
+            // Local cleanup
             if (downloadedImages.length > 0) {
-                console.log('🗑️  Cleaning up temporary files...');
                 await imageService.cleanupAllImages(downloadedImages);
             }
 

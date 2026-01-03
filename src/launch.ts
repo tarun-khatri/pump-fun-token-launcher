@@ -1,8 +1,8 @@
 import { createTransaction, sendAndConfirmTransactionWrapper, bufferFromUInt64, bufferFromString } from './utils';
 import web3, { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,createAssociatedTokenAccountInstruction,getAssociatedTokenAddress } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 import { TokenLaunchConfig, LaunchResult } from './index';
-import { COMPUTE_BUDGET_PROGRAM_ID, GLOBAL, MINT_AUTHORITY, MPL_TOKEN_METADATA, PUMP_FUN_ACCOUNT, PUMP_FUN_PROGRAM, RENT, SYSTEM_PROGRAM, FEE_CONFIG, FEE_PROGRAM} from './constants';
+import { COMPUTE_BUDGET_PROGRAM_ID, GLOBAL, MINT_AUTHORITY, MPL_TOKEN_METADATA, PUMP_FUN_ACCOUNT, PUMP_FUN_PROGRAM, RENT, SYSTEM_PROGRAM, FEE_CONFIG, FEE_PROGRAM } from './constants';
 import { calculateTokenAmountForBuy, getKeyPairFromPrivateKey } from './utils';
 import BN from 'bn.js';
 
@@ -14,9 +14,9 @@ import BN from 'bn.js';
  * @returns Promise<LaunchResult> - Result of the token launch
  */
 export async function launchToken(
-  config: TokenLaunchConfig,
-  privateKey: string | Keypair,
-  rpcUrl?: string
+    config: TokenLaunchConfig,
+    privateKey: string | Keypair,
+    rpcUrl?: string
 ): Promise<LaunchResult> {
     try {
         // Validate required config parameters
@@ -26,19 +26,19 @@ export async function launchToken(
 
         // Initialize connection
         const connection = new Connection(
-        rpcUrl || 'https://api.mainnet-beta.solana.com',
-        'confirmed'
+            rpcUrl || 'https://api.mainnet-beta.solana.com',
+            'confirmed'
         );
 
         // Handle private key - convert string to Keypair if needed
         let keyPair: Keypair;
         if (typeof privateKey === 'string') {
-            try{
+            try {
                 keyPair = Keypair.fromSecretKey(
                     Buffer.from(privateKey, 'base64')
                 );
             }
-            catch(error) {
+            catch (error) {
                 keyPair = await getKeyPairFromPrivateKey(privateKey);
             }
         } else {
@@ -58,7 +58,7 @@ export async function launchToken(
         const owner = payer.publicKey;
         //Create new wallet to be used as mint
         let mint;
-        if(!mintKeypair) {
+        if (!mintKeypair) {
             const genMint = Keypair.generate();
             mint = genMint;
         }
@@ -85,7 +85,7 @@ export async function launchToken(
             MPL_TOKEN_METADATA
         );
 
-         const [creatorVault] = await PublicKey.findProgramAddress(
+        const [creatorVault] = await PublicKey.findProgramAddress(
             [Buffer.from('creator-vault'), owner.toBuffer()],
             PUMP_FUN_PROGRAM
         );
@@ -98,7 +98,7 @@ export async function launchToken(
                 units: 300_000
             });
             txBuilder.add(computeUnitLimitIx);
-            
+
             const microLamports = BigInt(Math.floor((priorityFee / 3) * 1_000_000_000)); // Convert SOL to micro-lamports
             const computeUnitPriceIx = web3.ComputeBudgetProgram.setComputeUnitPrice({
                 microLamports
@@ -144,7 +144,7 @@ export async function launchToken(
         txBuilder.add(instruction);
 
         // 🟩 If devBuyAmount is set, add the dev buy instruction to this same transaction
-        if (initialBuy && initialBuy> 0) {
+        if (initialBuy && initialBuy > 0) {
             const tokenAccount = await getAssociatedTokenAddress(
                 mint.publicKey,
                 owner,
@@ -154,23 +154,23 @@ export async function launchToken(
             const tokenAccountInfo = await connection.getAccountInfo(tokenAccount);
             if (!tokenAccountInfo) {
                 txBuilder.add(
-                createAssociatedTokenAccountInstruction(
-                    owner,
-                    tokenAccount,
-                    owner,
-                    mint.publicKey
-                )
+                    createAssociatedTokenAccountInstruction(
+                        owner,
+                        tokenAccount,
+                        owner,
+                        mint.publicKey
+                    )
                 );
             }
 
-            const solInLamports = initialBuy *  web3.LAMPORTS_PER_SOL;
+            const solInLamports = initialBuy * web3.LAMPORTS_PER_SOL;
             const reserves = {
                 virtualTokenReserves: new BN(1073000000000000),
                 virtualSolReserves: new BN(30000000000)
             };
             const tokenOut = calculateTokenAmountForBuy(new BN(solInLamports), reserves, 0);
             const solInWithSlippage = initialBuy * (1 + slippage / 100);
-            const maxSolCost = Math.floor(solInWithSlippage *  web3.LAMPORTS_PER_SOL);
+            const maxSolCost = Math.floor(solInWithSlippage * web3.LAMPORTS_PER_SOL);
 
             // Get required PDAs for buy instruction
             const [globalVolumeAccumulator] = await PublicKey.findProgramAddress(
@@ -227,56 +227,69 @@ export async function launchToken(
             }));
         }
 
+        // Optimizing for speed (Production Settings)
         const transaction = await createTransaction(connection, txBuilder.instructions, payer.publicKey);
-        const signature = await sendAndConfirmTransactionWrapper(connection, transaction, [payer, mint]);
-        
-        if (!signature) {
-            return {
-                success: false,
-                error: 'Transaction failed to confirm'
-            };
+
+        // 🚀 PRODUCTION OPTIMIZATION: skipPreflight + processed commitment
+        // This cuts ~1-2 seconds off by skipping simulation and accepting the transaction faster
+        const signature = await connection.sendTransaction(transaction, [payer, mint], {
+            skipPreflight: true,
+            preflightCommitment: 'processed',
+        });
+
+        // confirmTransaction is slow, but we need to know if it worked.
+        // We use a shorter logic here just to return the signature fast.
+        // In a real bot, you might return immediately and listen for confirmation in background.
+        const confirmation = await connection.confirmTransaction({
+            signature,
+            blockhash: transaction.recentBlockhash!,
+            lastValidBlockHeight: transaction.lastValidBlockHeight!
+        }, 'processed'); // 'processed' is much faster than 'confirmed' or 'finalized'
+
+        if (confirmation.value.err) {
+            throw new Error(`Transaction failed: ${confirmation.value.err}`);
         }
-        
+
         return {
             success: true,
             signature: signature,
             tokenAddress: mint.publicKey.toString()
         };
     }
-    catch(error: any) {
+    catch (error: any) {
         console.error('Error launching token:', error);
         return {
             success: false,
             error: error.message || 'Unknown error occurred'
         };
     }
-  }
+}
 
-  /**
- * Validate token launch configuration
- * @param config - Token configuration to validate
- * @returns boolean - true if valid, throws error if invalid
- */
+/**
+* Validate token launch configuration
+* @param config - Token configuration to validate
+* @returns boolean - true if valid, throws error if invalid
+*/
 export function validateTokenConfig(config: TokenLaunchConfig): boolean {
-  if (!config.name || config.name.trim().length === 0) {
-    throw new Error('Token name is required');
-  }
-  
-  if (!config.symbol || config.symbol.trim().length === 0) {
-    throw new Error('Token symbol is required');
-  }
-  
-  if (config.symbol.length > 10) {
-    throw new Error('Token symbol must be 10 characters or less');
-  }
-  
-  if (config.initialBuy && config.initialBuy < 0) {
-    throw new Error('Initial buy amount must be positive');
-  }
-  
-  if (config.slippage && (config.slippage < 0 || config.slippage > 100)) {
-    throw new Error('Slippage must be between 0 and 100');
-  }
-  
-  return true;
+    if (!config.name || config.name.trim().length === 0) {
+        throw new Error('Token name is required');
+    }
+
+    if (!config.symbol || config.symbol.trim().length === 0) {
+        throw new Error('Token symbol is required');
+    }
+
+    if (config.symbol.length > 10) {
+        throw new Error('Token symbol must be 10 characters or less');
+    }
+
+    if (config.initialBuy && config.initialBuy < 0) {
+        throw new Error('Initial buy amount must be positive');
+    }
+
+    if (config.slippage && (config.slippage < 0 || config.slippage > 100)) {
+        throw new Error('Slippage must be between 0 and 100');
+    }
+
+    return true;
 }
