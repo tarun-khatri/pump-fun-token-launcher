@@ -22,24 +22,24 @@ export class QueueManager {
     private queue: string[] = [];
     private processing: boolean = false;
     private paused: boolean = false;
-    
+
     // Rate limiting
     private launchesThisHour: number = 0;
     private hourlyLimit: number;
     private hourResetTime: Date;
-    
+
     // Budget tracking
     private budgetUsed: number = 0;
     private budgetLimit: number;
     private budgetResetTime: Date;
-    
+
     // Launch delay
     private launchDelaySeconds: number;
-    
+
     // Statistics
     private totalProcessed: number = 0;
     private totalFailed: number = 0;
-    
+
     // Queue persistence file
     private queueFile: string = path.join(process.cwd(), 'queue.json');
 
@@ -48,15 +48,15 @@ export class QueueManager {
         this.hourlyLimit = parseInt(process.env.HOURLY_LAUNCH_LIMIT || '10');
         this.budgetLimit = parseFloat(process.env.DAILY_BUDGET_SOL || '1.0');
         this.launchDelaySeconds = parseInt(process.env.LAUNCH_DELAY_SECONDS || '120');
-        
+
         // Initialize reset times
         this.hourResetTime = new Date(Date.now() + 3600000); // 1 hour from now
         this.budgetResetTime = new Date();
         this.budgetResetTime.setHours(24, 0, 0, 0); // Midnight
-        
+
         // Load persisted queue
         this.loadQueue();
-        
+
         console.log('✅ Queue Manager initialized');
         console.log(`   Hourly Limit: ${this.hourlyLimit} launches/hour`);
         console.log(`   Daily Budget: ${this.budgetLimit} SOL`);
@@ -77,10 +77,10 @@ export class QueueManager {
         this.queue.push(tweetId);
         console.log(`✅ Added to queue: ${tweetId}`);
         console.log(`   Queue size: ${this.queue.length}`);
-        
+
         // Persist queue
         this.saveQueue();
-        
+
         // Start processing if not already running
         if (!this.processing && !this.paused) {
             this.processQueue();
@@ -137,7 +137,24 @@ export class QueueManager {
 
             try {
                 // Launch token
-                const result = await orchestrator.launchTokenFromTweet(tweetId);
+                // Default context for legacy automation (from .env)
+                const userContext = {
+                    userId: 'admin-legacy',
+                    privateKey: process.env.PRIVATE_KEY || '',
+                    settings: {
+                        initialBuyAmount: parseFloat(process.env.INITIAL_BUY_AMOUNT || '0.01'),
+                        slippage: parseInt(process.env.SLIPPAGE_BPS || '1000') / 100, // BPS to %
+                        priorityFee: parseFloat(process.env.PRIORITY_FEE || '0.001'),
+                        sellDelaySeconds: parseInt(process.env.SELL_DELAY_SECONDS || '120'),
+                        autoSell: process.env.AUTO_SELL === 'true'
+                    }
+                };
+
+                if (!userContext.privateKey) {
+                    throw new Error('PRIVATE_KEY missing in .env for legacy automation');
+                }
+
+                const result = await orchestrator.launchTokenFromTweet(tweetId, userContext);
 
                 // Update statistics
                 this.launchesThisHour++;
@@ -183,7 +200,7 @@ export class QueueManager {
     resumeQueue(): void {
         this.paused = false;
         console.log('▶️  Queue resumed');
-        
+
         if (this.queue.length > 0 && !this.processing) {
             this.processQueue();
         }
@@ -274,7 +291,7 @@ export class QueueManager {
         try {
             if (fs.existsSync(this.queueFile)) {
                 const data = JSON.parse(fs.readFileSync(this.queueFile, 'utf8'));
-                
+
                 this.queue = data.queue || [];
                 this.launchesThisHour = data.launchesThisHour || 0;
                 this.hourResetTime = new Date(data.hourResetTime || Date.now() + 3600000);

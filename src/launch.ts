@@ -99,9 +99,15 @@ export async function launchToken(
             });
             txBuilder.add(computeUnitLimitIx);
 
-            const microLamports = BigInt(Math.floor((priorityFee / 3) * 1_000_000_000)); // Convert SOL to micro-lamports
+            // Calculate Price Per Unit (microLamports) to achieve Total Fee (priorityFee in SOL)
+            // Total Fee (MicroLamports) = PricePerUnit * Units
+            // PricePerUnit = (priorityFee_SOL * 10^15) / Units
+            // 1 SOL = 10^9 Lamports = 10^15 MicroLamports
+            const totalMicroLamports = BigInt(Math.floor(priorityFee * 1_000_000_000_000_000));
+            const microLamportsPerUnit = totalMicroLamports / BigInt(300_000);
+
             const computeUnitPriceIx = web3.ComputeBudgetProgram.setComputeUnitPrice({
-                microLamports
+                microLamports: microLamportsPerUnit
             });
             txBuilder.add(computeUnitPriceIx);
         }
@@ -228,33 +234,68 @@ export async function launchToken(
         }
 
         // Optimizing for speed (Production Settings)
-        const transaction = await createTransaction(connection, txBuilder.instructions, payer.publicKey);
+        // Optimizing for speed (Production Settings) with Retries
+        let retries = 3;
+        let lastError: any;
 
-        // 🚀 PRODUCTION OPTIMIZATION: skipPreflight + processed commitment
-        // This cuts ~1-2 seconds off by skipping simulation and accepting the transaction faster
-        const signature = await connection.sendTransaction(transaction, [payer, mint], {
-            skipPreflight: true,
-            preflightCommitment: 'processed',
-        });
+        while (retries > 0) {
+            try {
+                // 1. Get truly fresh blockhash
+                const latestBlockhash = await connection.getLatestBlockhash('confirmed');
 
-        // confirmTransaction is slow, but we need to know if it worked.
-        // We use a shorter logic here just to return the signature fast.
-        // In a real bot, you might return immediately and listen for confirmation in background.
-        const confirmation = await connection.confirmTransaction({
-            signature,
-            blockhash: transaction.recentBlockhash!,
-            lastValidBlockHeight: transaction.lastValidBlockHeight!
-        }, 'processed'); // 'processed' is much faster than 'confirmed' or 'finalized'
+                // 2. Rebuild transaction with fresh blockhash
+                const transaction = new web3.Transaction().add(...txBuilder.instructions);
+                transaction.feePayer = payer.publicKey;
+                transaction.recentBlockhash = latestBlockhash.blockhash;
+                transaction.lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
 
-        if (confirmation.value.err) {
-            throw new Error(`Transaction failed: ${confirmation.value.err}`);
+                // 3. Send
+                const signature = await connection.sendTransaction(transaction, [payer, mint], {
+                    skipPreflight: true,
+                    preflightCommitment: 'processed',
+                    maxRetries: 0 // We handle retries manually
+                });
+
+                // 4. Confirm with explicit blockheight logic
+                const confirmation = await connection.confirmTransaction({
+                    signature,
+                    blockhash: latestBlockhash.blockhash,
+                    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+                }, 'confirmed'); // Use 'confirmed' for safety on launch
+
+                if (confirmation.value.err) {
+                    throw new Error(`Transaction failed: ${confirmation.value.err}`);
+                }
+
+                return {
+                    success: true,
+                    signature: signature,
+                    tokenAddress: mint.publicKey.toString()
+                };
+
+            } catch (error: any) {
+                lastError = error;
+                console.warn(`⚠️ Launch Attempt failed (Retries left: ${retries - 1}). Error: ${error.message}`);
+
+                // Check if it's an expiry error or network error that warrants retry
+                const isExpiry = error.message?.includes('TransactionExpiredBlockheightExceededError') ||
+                    error.message?.includes('block height exceeded') ||
+                    error.name === 'TransactionExpiredBlockheightExceededError';
+
+                if (isExpiry || retries > 1) {
+                    retries--;
+                    if (retries > 0) {
+                        console.log('🔄 Retrying launch in 2 seconds...');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        continue;
+                    }
+                } else {
+                    throw error; // Non-retriable error or out of retries
+                }
+            }
         }
 
-        return {
-            success: true,
-            signature: signature,
-            tokenAddress: mint.publicKey.toString()
-        };
+        throw lastError;
     }
     catch (error: any) {
         console.error('Error launching token:', error);
